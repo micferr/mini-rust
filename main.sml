@@ -167,7 +167,6 @@ evalProgram(p3, storage, borrows); (* BorrowException! Borrow mutabile dopo borr
 val x = Var(1, TypeI);
 val y = Var(2, TypeI);
 val a = Var(3, TypeMR);
-val b = Var(4, TypeMR);
 
 (* Istruzioni *)
 val i1 = AssignVar(x, ExprEV(ExprVal(IVal(ConstInt(5)))));
@@ -187,3 +186,7 @@ val res = evalProgram(p, storage, borrows);
 val res_storage = #1 res;
 res_storage (evalVarLoc x);
 res_storage (evalVarLoc y);
+
+(* Esempio 5.2 - Esempio 5, ma riscritto in un'unica espressione *)
+
+val res = evalProgram(Concat(Concat(Concat(Concat(MakeProgram(AssignVar(Var(1, TypeI), ExprEV(ExprVal(IVal(ConstInt(5)))))), AssignVar(Var(2, TypeI), ExprEV(ExprVal(IVal(ConstInt(6)))))), AssignVar(Var(3, TypeMR), ExprMutRef(MutRef(Var(1, TypeI))))), AssignVar(Var(3, TypeMR), ExprMutRef(MutRef(Var(2, TypeI))))), AssignRef(Var(3, TypeMR), ExprEV(ExprVal(IVal(ConstInt(7)))))), (make_storage 0 0 0), (make_storage 0 0 0));
