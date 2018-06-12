@@ -7,18 +7,28 @@ val storage = make_storage 1 1 0;
 val storage = add_to_storage storage 2 2;
 
 (* storage dei borrow *)
-datatype borrow_status = not_borrowed | immutably_borrowed | mutably_borrowed;
-val borrows = make_storage 0 not_borrowed not_borrowed;
+(* 0 : not borrowed | -1 : mutably borrowed | n>0 : number of immutable borrows *)
+val borrows = make_storage 0 0 0;
 
 exception BorrowException; 
-fun is_borrowed borrow_storage addr = (borrow_storage addr) <> not_borrowed; 
-fun is_mutably_borrowed borrow_storage addr = (borrow_storage addr) = mutably_borrowed;
-fun is_immutably_borrowed borrow_storage addr = (borrow_storage addr) = immutably_borrowed;
+fun is_borrowed borrow_storage addr = (borrow_storage addr) <> 0; 
+fun is_mutably_borrowed borrow_storage addr = (borrow_storage addr) < 0;
+fun is_immutably_borrowed borrow_storage addr = (borrow_storage addr) > 0;
 
-fun mut_borrow address borrow_storage = if (not (is_borrowed borrow_storage address)) 
-    then add_to_storage borrow_storage address mutably_borrowed else raise BorrowException;
-fun imm_borrow address borrow_storage = if (not (is_mutably_borrowed borrow_storage address)) 
-    then add_to_storage borrow_storage address immutably_borrowed else raise BorrowException;
+fun mut_borrow address borrow_storage = 
+    if 
+        (not (is_borrowed borrow_storage address)) 
+    then
+        add_to_storage borrow_storage address ~1 
+    else 
+        raise BorrowException;
+fun imm_borrow address borrow_storage = 
+    if 
+        (not (is_mutably_borrowed borrow_storage address)) 
+    then 
+        add_to_storage borrow_storage address ((borrow_storage address) + 1) 
+    else 
+        raise BorrowException;
 
 datatype Int = ConstInt of int | MutInt of int;
 datatype Type = TypeI | TypeMR | TypeCR;
@@ -61,8 +71,21 @@ datatype Instr = AssignVar of Var * Expr | AssignRef of Var * Expr;
 
 (* Il match non esaustivo previene automaticamente assegnamenti non consentiti *)
 fun evalInstr(AssignVar(Var(l,TypeI), ExprEV(e)), s, b) = (add_to_storage s l (evalExprV e s), b)
-    | evalInstr(AssignVar(Var(l,TypeMR), ExprMutRef(e)), s, b) = (add_to_storage s l (evalMutRef e), (mut_borrow (evalMutRef e) b))
-    | evalInstr(AssignVar(Var(l,TypeCR), ExprConstRef(e)), s, b) = (add_to_storage s l (evalConstRef e), (imm_borrow (evalConstRef e) b))
+    | evalInstr(AssignVar(Var(l,TypeMR), ExprMutRef(e)), s, b) = 
+        if 
+            (b (evalMutRef e)) < 0
+        then
+            (* Annulliamo il borrow mutabile per la variabile correntemente puntata prima di fare il borrow della successiva *)
+            (add_to_storage s l (evalMutRef e), (mut_borrow (evalMutRef e) (add_to_storage b (s l) 0)))
+        else
+            (add_to_storage s l (evalMutRef e), (mut_borrow (evalMutRef e) b))
+    | evalInstr(AssignVar(Var(l,TypeCR), ExprConstRef(e)), s, b) = 
+        if 
+            (b (evalConstRef e)) > 0
+        then
+            (add_to_storage s l (evalConstRef e), (imm_borrow (evalConstRef e) (add_to_storage b (s l) ((b (s l)) + ~1))))
+        else
+            (add_to_storage s l (evalConstRef e), (imm_borrow (evalConstRef e) b))
     | evalInstr(AssignRef(Var(l,TypeMR), ExprEV(e)), s, b) = (add_to_storage s (s l) (evalExprV e s), b)
     | evalInstr(AssignRef(Var(l,TypeMR), ExprMutRef(e)), s, b) = (add_to_storage s (s l) (evalMutRef e), (mut_borrow (evalMutRef e) b))
     | evalInstr(AssignRef(Var(l,TypeMR), ExprConstRef(e)), s, b) = (add_to_storage s (s l) (evalConstRef e), (imm_borrow (evalConstRef e) b));
@@ -157,7 +180,7 @@ val p = Concat(Concat(Concat(Concat(MakeProgram(i1), i2), i3), i4), i5);
 
 (* Esecuzione del programma *)
 val storage = (make_storage 0 0 0); (* Inizializza lo storage a zero *)
-val borrows = (make_storage 0 not_borrowed not_borrowed) (* Nessuna variabile presa in borrow *)
+val borrows = (make_storage 0 0 0) (* Nessuna variabile presa in borrow *)
 val res = evalProgram(p, storage, borrows);
 
 (* Verifica dei risultati *)
