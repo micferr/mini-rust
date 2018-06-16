@@ -1,3 +1,11 @@
+(*
+    Progetto di Linguaggi di Programmazione - A.A. 2017/18
+*)
+
+(* 
+    Implementiamo gli storage come dizionari, le cui chiavi corrispondono 
+    a interi (locazioni di memoria) 
+*)
 fun make_storage k v def = fn x => if x = k then v else def;
 fun add_to_storage s l v = fn x => if x = l then v else s x;
 
@@ -7,7 +15,11 @@ val storage = make_storage 1 1 0;
 val storage = add_to_storage storage 2 2;
 
 (* storage dei borrow *)
-(* 0 : not borrowed | -1 : mutably borrowed | n>0 : number of immutable borrows *)
+(* 0 : not borrowed | -1 : mutably borrowed | n>0 : numero di borrow immutabili *)
+(* 
+    Abbiamo preferito usare una rappresentazione numerica per gli stati di borrow
+    semplicemente per facilita' di implementazione
+*)
 val borrows = make_storage 0 0 0;
 
 exception BorrowException; 
@@ -15,13 +27,16 @@ fun is_borrowed borrow_storage addr = (borrow_storage addr) <> 0;
 fun is_mutably_borrowed borrow_storage addr = (borrow_storage addr) < 0;
 fun is_immutably_borrowed borrow_storage addr = (borrow_storage addr) > 0;
 
+(* Effettua il borrow mutabile della variabile in una data locaazione *)
 fun mut_borrow address borrow_storage = 
     if 
+        (* Si puo' effettuare il borrow mutabile solo per variabili non borrowed *)
         (not (is_borrowed borrow_storage address)) 
     then
         add_to_storage borrow_storage address ~1 
     else 
         raise BorrowException;
+(* Effettua il borrow immutabile della variabile in una data locazione *)
 fun imm_borrow address borrow_storage = 
     if 
         (not (is_mutably_borrowed borrow_storage address)) 
@@ -61,31 +76,54 @@ fun evalExprV (ExprVar v) s = evalVarVal(v,s)
     | evalExprV (ExprMutDeref r) s = evalMutDeref(r,s)
     | evalExprV (ExprConstDeref r) s = evalConstDeref(r,s);
 
+(* Espressioni *)
 datatype Expr = ExprEV of ExprV | ExprMutRef of MutRef | ExprConstRef of ConstRef;
 
 fun evalExpr (ExprEV(e), s) = evalExprV(e) s
     | evalExpr (ExprMutRef(r), s) = evalMutRef(r)
     | evalExpr (ExprConstRef(r), s) = evalConstRef(r);
 
+(* Istruzioni *)
 datatype Instr = AssignVar of Var * Expr | AssignRef of Var * Expr;
 
 (* Il match non esaustivo previene automaticamente assegnamenti non consentiti *)
-fun evalInstr(AssignVar(Var(l,TypeI), ExprEV(e)), s, b) = (add_to_storage s l (evalExprV e s), b)
+fun   evalInstr(AssignVar(Var(l,TypeI), ExprEV(e)), s, b) = 
+        if
+            (not (is_borrowed b l))
+        then
+            (add_to_storage s l (evalExprV e s), b)
+        else
+            raise BorrowException
     | evalInstr(AssignVar(Var(l,TypeMR), ExprMutRef(e)), s, b) = 
-        if 
-            (b (evalMutRef e)) < 0
+        if
+            (not (is_borrowed b l))
         then
-            (* Annulliamo il borrow mutabile per la variabile correntemente puntata prima di fare il borrow della successiva *)
-            (add_to_storage s l (evalMutRef e), (mut_borrow (evalMutRef e) (add_to_storage b (s l) 0)))
-        else
-            (add_to_storage s l (evalMutRef e), (mut_borrow (evalMutRef e) b))
+            (
+            if 
+                (b (evalMutRef e)) < 0
+            then
+                (* Annulliamo il borrow mutabile per la variabile correntemente puntata prima di fare il borrow della successiva *)
+                (add_to_storage s l (evalMutRef e), (mut_borrow (evalMutRef e) (add_to_storage b (s l) 0)))
+            else
+                (add_to_storage s l (evalMutRef e), (mut_borrow (evalMutRef e) b))
+            )
+        else 
+            raise BorrowException
     | evalInstr(AssignVar(Var(l,TypeCR), ExprConstRef(e)), s, b) = 
-        if 
-            (b (evalConstRef e)) > 0
-        then
-            (add_to_storage s l (evalConstRef e), (imm_borrow (evalConstRef e) (add_to_storage b (s l) ((b (s l)) + ~1))))
+        if
+            (not (is_borrowed b l))
+        then 
+            (
+            if 
+                (b (evalConstRef e)) > 0
+            then
+                (* Diminuiamo di 1 il numero di borrow immutabili effettuati sulla variabile precedentemente in borrow *)
+                (add_to_storage s l (evalConstRef e), (imm_borrow (evalConstRef e) (add_to_storage b (s l) ((b (s l)) + ~1))))
+            else
+                (add_to_storage s l (evalConstRef e), (imm_borrow (evalConstRef e) b))
+            )
         else
-            (add_to_storage s l (evalConstRef e), (imm_borrow (evalConstRef e) b))
+            raise BorrowException
     | evalInstr(AssignRef(Var(l,TypeMR), ExprEV(e)), s, b) = (add_to_storage s (s l) (evalExprV e s), b)
     | evalInstr(AssignRef(Var(l,TypeMR), ExprMutRef(e)), s, b) = (add_to_storage s (s l) (evalMutRef e), (mut_borrow (evalMutRef e) b))
     | evalInstr(AssignRef(Var(l,TypeMR), ExprConstRef(e)), s, b) = (add_to_storage s (s l) (evalConstRef e), (imm_borrow (evalConstRef e) b));
